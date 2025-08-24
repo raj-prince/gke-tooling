@@ -16,29 +16,11 @@ BLOCK_SIZE=${5:-1M}
 PROJECT_ID="gcs-tess"
 CLUSTER_REGION="us-central1-c"
 CLUSTER_NAME="warp-cluster"
-BUCKET_NAME="gcs-fuse-warp-test-bucket"
-
-# Colors
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-
-print_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
+BUCKET_NAME="princer-gcsfuse-test"
 
 # Setup GKE
 setup_cluster() {
-    print_info "Setting up GKE connection..."
+    echo "[INFO] Setting up GKE connection..."
     gcloud config set project $PROJECT_ID
     gcloud container clusters get-credentials $CLUSTER_NAME --region $CLUSTER_REGION
 }
@@ -47,16 +29,170 @@ setup_cluster() {
 run_fio_job() {
     local job_name="fio-test-$(date +%s)"
     
-    print_info "Running FIO test with $ITERATIONS iterations (Job: $job_name)"
+    echo "[INFO] Running FIO test with $ITERATIONS iterations (Job: $job_name)"
     
-    # Create very simple YAML job without ConfigMap complexity
-    cat > /tmp/fio-job.yaml << EOF
+    # Create the FIO test script
+    create_fio_script
+    
+    # Create Kubernetes job YAML
+    create_job_yaml "$job_name"
+    
+    # Deploy job
+    kubectl apply -f /tmp/fio-job.yaml
+    
+    # Wait for completion and show results
+    echo "[INFO] Waiting for job to complete..."
+    kubectl wait --for=condition=complete job/${job_name} --timeout=600s
+    
+    # Get and show results
+    local pod_name=$(kubectl get pods -l job-name=${job_name} -o jsonpath='{.items[0].metadata.name}')
+    
+    echo "[INFO] Results:"
+    echo "=============================================="
+    kubectl logs $pod_name
+    echo "=============================================="
+    
+    # Cleanup
+    kubectl delete job ${job_name}
+    kubectl delete configmap "fio-script-${job_name}"
+    rm -f /tmp/fio-job.yaml /tmp/fio-test-script.sh
+}
+
+# Create the FIO test script that will run inside the container
+create_fio_script() {
+    cat > /tmp/fio-test-script.sh << 'SCRIPT_EOF'
+#!/bin/bash
+set -e
+
+# Install required packages
+apt-get update -qq
+apt-get install -y fio jq bc gettext-base
+
+# Print test configuration
+echo "Starting FIO test..."
+echo "Files: $NUM_FILES x $FILE_SIZE"
+echo "Mode: $MODE, Block Size: $BLOCK_SIZE"
+echo "Iterations: $ITERATIONS"
+echo ""
+
+# Create FIO configuration file
+create_fio_config() {
+    cat > /tmp/fio.conf << FIO_CONFIG_EOF
+[global]
+ioengine=libaio
+direct=1
+verify=0
+bs=$BLOCK_SIZE
+iodepth=64
+runtime=30s
+time_based=1
+nrfiles=$NUM_FILES
+thread=1
+group_reporting=1
+filename_format=test.\$jobnum.\$filenum
+
+[test]
+rw=$MODE
+filesize=$FILE_SIZE
+directory=/data/$FILE_SIZE
+numjobs=1
+FIO_CONFIG_EOF
+}
+
+# Create the FIO config
+create_fio_config
+
+echo "Running FIO config:"
+cat /tmp/fio.conf
+echo ""
+
+# Arrays to store results from multiple iterations
+declare -a iops_results
+declare -a bw_results
+
+# Run FIO multiple times
+for i in $(seq 1 $ITERATIONS); do
+    echo "Running FIO iteration $i/$ITERATIONS"
+    
+    json_output="/tmp/fio-result-${i}.json"
+    fio /tmp/fio.conf --output-format=json --output="$json_output"
+    
+    if [ -f "$json_output" ]; then
+        echo "FIO iteration $i completed"
+        
+        # Parse JSON results
+        read_iops=$(jq -r '.jobs[0].read.iops // 0' "$json_output")
+        read_bw_kbs=$(jq -r '.jobs[0].read.bw // 0' "$json_output")
+        write_iops=$(jq -r '.jobs[0].write.iops // 0' "$json_output")
+        write_bw_kbs=$(jq -r '.jobs[0].write.bw // 0' "$json_output")
+        
+        # Convert bandwidth from KB/s to MB/s
+        read_bw_mbs=$(echo "scale=2; $read_bw_kbs / 1024" | bc -l)
+        write_bw_mbs=$(echo "scale=2; $write_bw_kbs / 1024" | bc -l)
+        
+        # Store results based on operation type
+        if (( $(echo "$read_iops > 0" | bc -l) )); then
+            iops_results[$i]=$read_iops
+            bw_results[$i]=$read_bw_mbs
+            echo "Read IOPS: $read_iops, BW: ${read_bw_mbs} MB/s"
+        elif (( $(echo "$write_iops > 0" | bc -l) )); then
+            iops_results[$i]=$write_iops
+            bw_results[$i]=$write_bw_mbs
+            echo "Write IOPS: $write_iops, BW: ${write_bw_mbs} MB/s"
+        fi
+    else
+        echo "ERROR: FIO iteration $i failed"
+    fi
+    
+    echo ""
+    sleep 5
+done
+
+# Calculate and display averages
+echo "RESULTS:"
+if [ ${#iops_results[@]} -gt 0 ]; then
+    total_iops=0
+    total_bw=0
+    
+    # Sum all IOPS and bandwidth values
+    for val in "${iops_results[@]}"; do
+        total_iops=$(echo "$total_iops + $val" | bc -l)
+    done
+    
+    for val in "${bw_results[@]}"; do
+        total_bw=$(echo "$total_bw + $val" | bc -l)
+    done
+    
+    # Calculate averages
+    avg_iops=$(echo "scale=2; $total_iops / ${#iops_results[@]}" | bc -l)
+    avg_bw=$(echo "scale=2; $total_bw / ${#bw_results[@]}" | bc -l)
+    
+    echo "Average IOPS: $avg_iops"
+    echo "Average Bandwidth: $avg_bw MB/s"
+    echo "Successful iterations: ${#iops_results[@]} / $ITERATIONS"
+fi
+
+echo "Test completed!"
+SCRIPT_EOF
+}
+
+# Create Kubernetes job YAML
+create_job_yaml() {
+    local job_name="$1"
+    
+    cat > /tmp/fio-job.yaml << YAML_EOF
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: ${job_name}
 spec:
   template:
+    metadata:
+      annotations:
+        gke-gcsfuse/volumes: "true"
+        gke-gcsfuse/cpu-limit: "0"
+        gke-gcsfuse/memory-limit: "0"
+        gke-gcsfuse/ephemeral-storage-limit: "0"
     spec:
       restartPolicy: Never
       serviceAccountName: warp-benchmark
@@ -74,34 +210,49 @@ spec:
           value: "${MODE}"
         - name: BLOCK_SIZE
           value: "${BLOCK_SIZE}"
-        command: ["bash", "-c"]
-        args: ["apt-get update -qq && apt-get install -y fio jq bc gettext-base && echo 'Starting FIO test...' && echo 'Files: '\$NUM_FILES' x '\$FILE_SIZE && echo 'Mode: '\$MODE', Block Size: '\$BLOCK_SIZE && echo 'Iterations: '\$ITERATIONS && echo '' && cat > /tmp/fio.conf.template << 'FIOEND' && echo '[global]' >> /tmp/fio.conf && echo 'ioengine=libaio' >> /tmp/fio.conf && echo 'direct=1' >> /tmp/fio.conf && echo 'verify=0' >> /tmp/fio.conf && echo 'bs='\$BLOCK_SIZE >> /tmp/fio.conf && echo 'iodepth=64' >> /tmp/fio.conf && echo 'runtime=30s' >> /tmp/fio.conf && echo 'time_based=1' >> /tmp/fio.conf && echo 'nrfiles='\$NUM_FILES >> /tmp/fio.conf && echo 'thread=1' >> /tmp/fio.conf && echo 'group_reporting=1' >> /tmp/fio.conf && echo 'filename_format=test.\$jobnum.\$filenum' >> /tmp/fio.conf && echo '' >> /tmp/fio.conf && echo '[test]' >> /tmp/fio.conf && echo 'rw='\$MODE >> /tmp/fio.conf && echo 'filesize='\$FILE_SIZE >> /tmp/fio.conf && echo 'directory=/data' >> /tmp/fio.conf && echo 'numjobs=1' >> /tmp/fio.conf && echo 'Running FIO config:' && cat /tmp/fio.conf && echo '' && declare -a iops_results && declare -a bw_results && for i in \$(seq 1 \$ITERATIONS); do echo 'Running FIO iteration '\$i'/'\$ITERATIONS; json_output=/tmp/fio-result-\${i}.json; fio /tmp/fio.conf --output-format=json --output=\$json_output; if [ -f \$json_output ]; then echo 'FIO iteration '\$i' completed'; read_iops=\$(jq -r '.jobs[0].read.iops // 0' \$json_output); read_bw_kbs=\$(jq -r '.jobs[0].read.bw // 0' \$json_output); write_iops=\$(jq -r '.jobs[0].write.iops // 0' \$json_output); write_bw_kbs=\$(jq -r '.jobs[0].write.bw // 0' \$json_output); read_bw_mbs=\$(echo \"scale=2; \$read_bw_kbs / 1024\" | bc -l); write_bw_mbs=\$(echo \"scale=2; \$write_bw_kbs / 1024\" | bc -l); if (( \$(echo \"\$read_iops > 0\" | bc -l) )); then iops_results[\$i]=\$read_iops; bw_results[\$i]=\$read_bw_mbs; echo 'Read IOPS: '\$read_iops', BW: '\${read_bw_mbs}' MB/s'; elif (( \$(echo \"\$write_iops > 0\" | bc -l) )); then iops_results[\$i]=\$write_iops; bw_results[\$i]=\$write_bw_mbs; echo 'Write IOPS: '\$write_iops', BW: '\${write_bw_mbs}' MB/s'; fi; else echo 'ERROR: FIO iteration '\$i' failed'; fi; echo ''; sleep 5; done && echo 'RESULTS:' && if [ \${#iops_results[@]} -gt 0 ]; then total_iops=0; total_bw=0; for val in \"\${iops_results[@]}\"; do total_iops=\$(echo \"\$total_iops + \$val\" | bc -l); done; for val in \"\${bw_results[@]}\"; do total_bw=\$(echo \"\$total_bw + \$val\" | bc -l); done; avg_iops=\$(echo \"scale=2; \$total_iops / \${#iops_results[@]}\" | bc -l); avg_bw=\$(echo \"scale=2; \$total_bw / \${#bw_results[@]}\" | bc -l); echo 'Average IOPS: '\$avg_iops; echo 'Average Bandwidth: '\$avg_bw' MB/s'; echo 'Successful iterations: '\${#iops_results[@]}' / '\$ITERATIONS; fi && echo 'Test completed!'"]
+        command: ["bash", "/tmp/fio-test-script.sh"]
         volumeMounts:
-        - name: test-volume
+        - name: gcs-fuse-volume
           mountPath: /data
+        - name: script-volume
+          mountPath: /tmp/fio-test-script.sh
+          subPath: fio-test-script.sh
       volumes:
-      - name: test-volume
-        emptyDir: {}
-EOF
+      - name: gcs-fuse-volume
+        csi:
+          driver: gcsfuse.csi.storage.gke.io
+          readOnly: false
+          volumeAttributes:
+            bucketName: "${BUCKET_NAME}"
+            mountOptions: "implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=trace"
+      - name: script-volume
+        configMap:
+          name: fio-script-${job_name}
+          defaultMode: 0755
+YAML_EOF
 
+    # Create ConfigMap with the script
+    kubectl create configmap "fio-script-${job_name}" --from-file=fio-test-script.sh=/tmp/fio-test-script.sh
+    
     # Deploy job
     kubectl apply -f /tmp/fio-job.yaml
     
-    # Wait for completion
-    print_info "Waiting for job to complete..."
+    # Wait for completion and show results
+    echo "[INFO] Waiting for job to complete..."
     kubectl wait --for=condition=complete job/${job_name} --timeout=600s
     
     # Get and show results
     local pod_name=$(kubectl get pods -l job-name=${job_name} -o jsonpath='{.items[0].metadata.name}')
     
-    print_info "Results:"
+    echo "[INFO] Results:"
     echo "=============================================="
     kubectl logs $pod_name
     echo "=============================================="
     
     # Cleanup
     kubectl delete job ${job_name}
-    rm -f /tmp/fio-job.yaml
+    kubectl delete configmap "fio-script-${job_name}"
+    rm -f /tmp/fio-job.yaml /tmp/fio-test-script.sh
 }
 
 # Show usage
@@ -130,14 +281,14 @@ if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
     exit 0
 fi
 
-print_info "Starting FIO Benchmark"
-print_info "Configuration: $NUM_FILES files x $FILE_SIZE, $ITERATIONS iterations"
-print_info "Mode: $MODE, Block Size: $BLOCK_SIZE"
+echo "[INFO] Starting FIO Benchmark"
+echo "[INFO] Configuration: $NUM_FILES files x $FILE_SIZE, $ITERATIONS iterations"
+echo "[INFO] Mode: $MODE, Block Size: $BLOCK_SIZE"
 echo ""
 
 # Check dependencies
 if ! command -v kubectl >/dev/null 2>&1; then
-    print_error "kubectl not found"
+    echo "[ERROR] kubectl not found"
     exit 1
 fi
 
@@ -147,4 +298,4 @@ setup_cluster
 # Run single job with multiple FIO iterations inside
 run_fio_job
 
-print_info "FIO Benchmark Complete!"
+echo "[INFO] FIO Benchmark Complete!"
