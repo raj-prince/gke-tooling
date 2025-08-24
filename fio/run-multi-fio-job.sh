@@ -2,7 +2,7 @@
 
 # Multi File Size FIO Benchmark Runner for GKE
 # This script runs FIO tests across different file sizes
-# Usage: ./multi-filesize-benchmark.sh [num_files] [iterations] [mode] [block_size] [mount_options] [parallel_mode] [max_parallel_jobs]
+# Usage: ./run-multi-fio-job.sh [num_files] [iterations] [mode] [block_size] [mount_options] [parallel_mode] [max_parallel_jobs]
 
 set -e
 
@@ -91,7 +91,7 @@ done
 echo "==============================================="
 echo ""
 
-# Function to extract results from simple-fio.sh output
+# Function to extract results from run-single-fio-job.sh output
 extract_results() {
     local output="$1"
     local iops=$(echo "$output" | grep "Average IOPS:" | tail -1 | awk '{print $3}')
@@ -123,7 +123,7 @@ run_single_test() {
     echo "=============================================="
     
     # Run the FIO test with dynamic file count
-    output=$(./simple-fio.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$BLOCK_SIZE" "$MOUNT_OPTIONS" 2>&1)
+    output=$(./run-single-fio-job.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$BLOCK_SIZE" "$MOUNT_OPTIONS" 2>&1)
     
     # Check if test was successful
     if echo "$output" | grep -q "FIO Benchmark Complete"; then
@@ -245,7 +245,7 @@ for file_size in "${FILE_SIZES[@]}"; do
     echo "=============================================="
     
     # Run the FIO test with dynamic file count
-    output=$(./simple-fio.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$BLOCK_SIZE" "$MOUNT_OPTIONS" 2>&1)
+    output=$(./run-single-fio-job.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$BLOCK_SIZE" "$MOUNT_OPTIONS" 2>&1)
     
     # Check if test was successful
     if echo "$output" | grep -q "FIO Benchmark Complete"; then
