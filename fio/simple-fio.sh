@@ -74,6 +74,7 @@ echo "Files: $NUM_FILES x $FILE_SIZE"
 echo "Mode: $MODE, Block Size: $BLOCK_SIZE"
 echo "Iterations: $ITERATIONS"
 echo ""
+mkdir -p /data/$FILE_SIZE
 
 # Create FIO configuration file
 create_fio_config() {
@@ -233,26 +234,6 @@ YAML_EOF
 
     # Create ConfigMap with the script
     kubectl create configmap "fio-script-${job_name}" --from-file=fio-test-script.sh=/tmp/fio-test-script.sh
-    
-    # Deploy job
-    kubectl apply -f /tmp/fio-job.yaml
-    
-    # Wait for completion and show results
-    echo "[INFO] Waiting for job to complete..."
-    kubectl wait --for=condition=complete job/${job_name} --timeout=600s
-    
-    # Get and show results
-    local pod_name=$(kubectl get pods -l job-name=${job_name} -o jsonpath='{.items[0].metadata.name}')
-    
-    echo "[INFO] Results:"
-    echo "=============================================="
-    kubectl logs $pod_name
-    echo "=============================================="
-    
-    # Cleanup
-    kubectl delete job ${job_name}
-    kubectl delete configmap "fio-script-${job_name}"
-    rm -f /tmp/fio-job.yaml /tmp/fio-test-script.sh
 }
 
 # Show usage
