@@ -128,9 +128,10 @@ for i in $(seq 1 $ITERATIONS); do
         write_iops=$(jq -r '.jobs[0].write.iops // 0' "$json_output")
         write_bw_kbs=$(jq -r '.jobs[0].write.bw // 0' "$json_output")
         
-        # Convert bandwidth from KB/s to MB/s
-        read_bw_mbs=$(echo "scale=2; $read_bw_kbs / 1024" | bc -l)
-        write_bw_mbs=$(echo "scale=2; $write_bw_kbs / 1024" | bc -l)
+        # Convert bandwidth from KiB/s (FIO output) to MB/s (decimal)
+        # FIO outputs in KiB/s (1024 bytes), convert to MB/s (1000000 bytes)
+        read_bw_mbs=$(echo "scale=2; ($read_bw_kbs * 1024) / 1000000" | bc -l)
+        write_bw_mbs=$(echo "scale=2; ($write_bw_kbs * 1024) / 1000000" | bc -l)
         
         # Store results based on operation type
         if (( $(echo "$read_iops > 0" | bc -l) )); then
@@ -199,6 +200,8 @@ spec:
       restartPolicy: Never
       serviceAccountName: warp-benchmark
       containers:
+      - name: gke-gcsfuse-sidecar
+        image: gcr.io/gcs-tess/princer_google_com_20250824072506/gcs-fuse-csi-driver-sidecar-mounter:v1.17.0-75-g072dfe3f
       - name: fio-test
         image: ubuntu:22.04
         env:
