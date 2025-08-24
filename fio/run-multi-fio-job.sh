@@ -12,21 +12,21 @@ MODE=${2:-read}
 BLOCK_SIZE=${3:-1M}
 PARALLEL_MODE=${4:-false}  # Set to true to enable parallel execution
 MAX_PARALLEL_JOBS=${5:-3}  # Maximum parallel jobs when parallel mode is enabled
-MOUNT_OPTIONS=${6:-"implicit-dirs,metadata-cache:ttl-secs:60,log-severity=info,enable-buffered-read,log-severity=trace,read-block-size-mb=16"}
+MOUNT_OPTIONS=${6:-"implicit-dirs,metadata-cache:ttl-secs:60,enable-buffered-read,log-severity=trace,read-block-size-mb=16,read-ahead=1024,read-max-blocks-per-handle=20,read-global-max-blocks=40"}
 
 # Array of file sizes to test
 FILE_SIZES=(
-    # "64K"
-    # "256K" 
-    # "1M"
-    # "4M"
-    # "16M"
-    # "64M"
+    "64K"
+    "256K" 
+    "1M"
+    "4M"
+    "16M"
+    "64M"
     "100M"
-    # "256M"
+    "256M"
     "1G"
-    # "4G"
-    # "10G"
+    "4G"
+    "10G"
 )
 
 # Results storage
@@ -46,16 +46,16 @@ get_num_files_for_size() {
     
     case "$file_size" in
         "64K"|"256K")
-            echo 200    # Many small files for better concurrency testing
+            echo 400    # Many small files for better concurrency testing
             ;;
         "1M"|"4M")
-            echo 100    # Moderate number of medium files
+            echo 200    # Moderate number of medium files
             ;;
         "16M"|"64M")
-            echo 40     # Fewer medium-large files
+            echo 50     # Fewer medium-large files
             ;;
         "256M"|"512M")
-            echo 20     # Fewer large files
+            echo 30     # Fewer large files
             ;;
         "1G"|"2G"|"4G")
             echo 10     # Few very large files
@@ -69,6 +69,49 @@ get_num_files_for_size() {
     esac
 }
 
+# Function to convert size string to bytes
+convert_to_bytes() {
+    local size="$1"
+    local number=$(echo "$size" | sed 's/[^0-9.]//g')
+    local unit=$(echo "$size" | sed 's/[0-9.]//g' | tr '[:lower:]' '[:upper:]')
+    
+    case "$unit" in
+        "K"|"KB")
+            echo $(echo "$number * 1024" | bc -l | cut -d'.' -f1)
+            ;;
+        "M"|"MB")
+            echo $(echo "$number * 1024 * 1024" | bc -l | cut -d'.' -f1)
+            ;;
+        "G"|"GB")
+            echo $(echo "$number * 1024 * 1024 * 1024" | bc -l | cut -d'.' -f1)
+            ;;
+        "T"|"TB")
+            echo $(echo "$number * 1024 * 1024 * 1024 * 1024" | bc -l | cut -d'.' -f1)
+            ;;
+        *)
+            # Assume bytes if no unit
+            echo "$number"
+            ;;
+    esac
+}
+
+# Function to adjust block size if it's larger than file size
+get_adjusted_block_size() {
+    local file_size="$1"
+    local block_size="$2"
+    
+    # Convert both to bytes for comparison
+    local file_bytes=$(convert_to_bytes "$file_size")
+    local block_bytes=$(convert_to_bytes "$block_size")
+    
+    # If block size is larger than file size, use file size as block size
+    if [ "$block_bytes" -gt "$file_bytes" ]; then
+        echo "$file_size"
+    else
+        echo "$block_size"
+    fi
+}
+
 echo "==============================================="
 echo "Multi File Size FIO Benchmark"
 echo "==============================================="
@@ -76,7 +119,7 @@ echo "Configuration:"
 echo "  Files per test: Dynamic based on file size"
 echo "  Iterations per size: $ITERATIONS"
 echo "  Mode: $MODE"
-echo "  Block Size: $BLOCK_SIZE"
+echo "  Block Size: $BLOCK_SIZE (auto-adjusted if larger than file size)"
 echo "  Mount Options: $MOUNT_OPTIONS"
 echo "  Parallel Mode: $PARALLEL_MODE"
 if [ "$PARALLEL_MODE" = "true" ]; then
@@ -141,8 +184,14 @@ run_single_test() {
     echo "Starting Test: File Size $file_size ($dynamic_num_files files) [PID: $$]"
     echo "=============================================="
     
-    # Run the FIO test with dynamic file count
-    output=$(./run-single-fio-job.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$BLOCK_SIZE" "$MOUNT_OPTIONS" 2>&1)
+    # Get adjusted block size (use file size if block size is larger than file size)
+    adjusted_block_size=$(get_adjusted_block_size "$file_size" "$BLOCK_SIZE")
+    if [ "$adjusted_block_size" != "$BLOCK_SIZE" ]; then
+        echo "  Note: Block size adjusted from $BLOCK_SIZE to $adjusted_block_size (file size limit)"
+    fi
+    
+    # Run the FIO test with dynamic file count and adjusted block size
+    output=$(./run-single-fio-job.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$adjusted_block_size" "$MOUNT_OPTIONS" 2>&1)
     
     # Check if test was successful
     if echo "$output" | grep -q "FIO Benchmark Complete"; then
@@ -270,8 +319,14 @@ for file_size in "${FILE_SIZES[@]}"; do
     echo "Testing File Size: $file_size ($dynamic_num_files files)"
     echo "=============================================="
     
-    # Run the FIO test with dynamic file count
-    output=$(./run-single-fio-job.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$BLOCK_SIZE" "$MOUNT_OPTIONS" 2>&1)
+    # Get adjusted block size (use file size if block size is larger than file size)
+    adjusted_block_size=$(get_adjusted_block_size "$file_size" "$BLOCK_SIZE")
+    if [ "$adjusted_block_size" != "$BLOCK_SIZE" ]; then
+        echo "  Note: Block size adjusted from $BLOCK_SIZE to $adjusted_block_size (file size limit)"
+    fi
+    
+    # Run the FIO test with dynamic file count and adjusted block size
+    output=$(./run-single-fio-job.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$adjusted_block_size" "$MOUNT_OPTIONS" 2>&1)
     
     # Check if test was successful
     if echo "$output" | grep -q "FIO Benchmark Complete"; then

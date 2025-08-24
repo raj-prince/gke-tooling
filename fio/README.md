@@ -86,12 +86,24 @@ Both scripts are pre-configured with the following GKE setup:
 ## File Size Configuration
 
 The multi-job script tests various file sizes with automatically adjusted file counts:
-- **Small files (64K-256K)**: 200 files
+- **Small files (64K-256K)**: 400 files
 - **Medium files (1M-4M)**: 100 files  
 - **Medium-large files (16M-64M)**: 40 files
 - **Large files (256M-512M)**: 20 files
 - **Very large files (1G-4G)**: 10 files
 - **Huge files (10G+)**: 4 files
+
+## Smart Block Size Adjustment
+
+The multi-job script automatically adjusts block size when necessary:
+- **Automatic adjustment**: If the specified block size is larger than the file size, it's automatically reduced to match the file size
+- **Clear notification**: When adjustment occurs, the script displays a note showing the original and adjusted block sizes
+- **Examples**: 
+  - Testing 64K files with 1M block size → Block size adjusted to 64K
+  - Testing 256K files with 4M block size → Block size adjusted to 256K
+  - Testing 1G files with 1M block size → No adjustment needed
+
+This ensures optimal FIO performance and prevents configuration errors that could cause test failures.
 
 ## Output and Results
 
