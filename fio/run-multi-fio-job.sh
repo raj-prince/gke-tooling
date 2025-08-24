@@ -7,13 +7,12 @@
 set -e
 
 # Default values
-NUM_FILES=${1:-10}
-ITERATIONS=${2:-2}
-MODE=${3:-read}
-BLOCK_SIZE=${4:-1M}
-MOUNT_OPTIONS=${5:-"implicit-dirs,metadata-cache:ttl-secs:60,log-severity=info,enable-buffered-read,log-severity=trace,read-block-size-mb=16"}
-PARALLEL_MODE=${6:-false}  # Set to true to enable parallel execution
-MAX_PARALLEL_JOBS=${7:-3}  # Maximum parallel jobs when parallel mode is enabled
+ITERATIONS=${1:-2}
+MODE=${2:-read}
+BLOCK_SIZE=${3:-1M}
+PARALLEL_MODE=${4:-false}  # Set to true to enable parallel execution
+MAX_PARALLEL_JOBS=${5:-3}  # Maximum parallel jobs when parallel mode is enabled
+MOUNT_OPTIONS=${6:-"implicit-dirs,metadata-cache:ttl-secs:60,log-severity=info,enable-buffered-read,log-severity=trace,read-block-size-mb=16"}
 
 # Array of file sizes to test
 FILE_SIZES=(
@@ -27,7 +26,7 @@ FILE_SIZES=(
     # "256M"
     "1G"
     # "4G"
-    # "10G"
+    "10G"
 )
 
 # Results storage

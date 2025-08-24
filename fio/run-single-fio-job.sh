@@ -64,8 +64,17 @@ monitor_resources() {
     local max_gcsfuse_cpu=0
     local max_gcsfuse_memory=0
     
-    # Try to get metrics multiple times during and after the job
-    for i in {1..30}; do  # Try for 30 seconds
+    # Monitor resources while pod is running
+    while true; do
+        # Check pod status first
+        pod_status=$(kubectl get pod "$pod_name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+        
+        # Break if pod is no longer running
+        if [ "$pod_status" != "Running" ]; then
+            echo "[INFO] Pod status changed to: $pod_status, stopping resource monitoring"
+            break
+        fi
+        
         # Get overall pod metrics
         resource_output=$(kubectl top pod "$pod_name" --no-headers 2>/dev/null || echo "")
         
@@ -121,7 +130,7 @@ monitor_resources() {
             done <<< "$container_output"
         fi
         
-        sleep 1
+        sleep 2  # Check every 2 seconds
     done
     
     echo "[INFO] Resource monitoring completed."
@@ -216,8 +225,8 @@ create_fio_script() {
 set -e
 
 # Install required packages
-apt-get update -qq
-apt-get install -y fio jq bc gettext-base
+apt update -qq > /dev/null
+apt install -qq -y fio jq bc gettext-base > /dev/null
 
 # Print test configuration
 echo "Starting FIO test..."

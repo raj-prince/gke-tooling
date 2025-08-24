@@ -102,30 +102,40 @@ Both scripts provide:
 ===============================================
 FIO Benchmark Results
 ===============================================
-Average IOPS: 1234.56
-Average Bandwidth: 123.45 MB/s
+Average IOPS: 629.85
+Average Bandwidth: 660.44 MB/s
+Successful iterations: 2 / 2
 
 Pod Resource Usage:
-Max CPU Usage: 250m
-Max Memory Usage: 512Mi
+Max CPU Usage: 4684m
+Max Memory Usage: 499Mi
 
 Container Resource Breakdown:
 FIO Test Container:
-  Max CPU Usage: 150m
-  Max Memory Usage: 256Mi
-GCSFuse Sidecar Container:
-  Max CPU Usage: 100m
-  Max Memory Usage: 256Mi
+  Max CPU Usage: 4563m
+  Max Memory Usage: 130Mi
+GCS FUSE Sidecar Container:
+  Max CPU Usage: 1578m
+  Max Memory Usage: 372Mi
 ===============================================
 ```
 
 ## Monitoring and Debugging
 
-Both scripts include:
-- Real-time resource monitoring during benchmark execution
-- Pod status checking and error handling
-- Detailed logging with configurable severity levels
-- Automatic cleanup of Kubernetes resources
+Both scripts include advanced monitoring capabilities:
+- **Dynamic Resource Monitoring**: Real-time CPU and memory tracking that adapts to job duration
+- **Pod Status-Based Monitoring**: Monitoring automatically stops when pods complete (no fixed time limits)
+- **Per-Container Metrics**: Separate tracking for FIO test container and GCS FUSE sidecar container
+- **Silent Package Installation**: Uses modern `apt --quiet` for clean installation logs
+- **Pod Status Checking**: Comprehensive error handling and status monitoring
+- **Detailed Debug Output**: Container metrics are logged for troubleshooting
+- **Automatic Cleanup**: Complete cleanup of Kubernetes resources after each test
+
+### Monitoring Features:
+- **Adaptive Duration**: Monitoring runs only while pods are in "Running" state
+- **Real-time Metrics**: CPU and memory usage captured every 2 seconds
+- **Maximum Value Tracking**: Records peak resource usage during test execution
+- **Multi-Container Support**: Tracks both test workload and GCS FUSE sidecar separately
 
 ## Troubleshooting
 
@@ -134,9 +144,19 @@ Both scripts include:
 3. **Missing YAML Files**: Ensure referenced Kubernetes YAML files exist in the workspace
 4. **Resource Limits**: Check if cluster has sufficient resources for the benchmark pods
 
+## Recent Improvements
+
+- **Smart Monitoring**: Resource monitoring now stops automatically when pods complete instead of running for fixed time periods
+- **Clean Installation**: Package installation (fio, jq, bc, gettext-base) now uses `apt --quiet` for minimal output
+- **Enhanced Resource Tracking**: Separate CPU and memory tracking for test container and GCS FUSE sidecar
+- **Better Status Detection**: Monitoring loop breaks based on pod status changes (Running → Succeeded/Failed)
+- **Improved Debugging**: Container metrics output available for troubleshooting performance issues
+
 ## Notes
 
-- The scripts automatically set up GKE connections and clean up resources
-- Results are saved with timestamps to avoid overwriting previous test results
-- Scripts include comprehensive error handling and status monitoring
-- Both scripts support various GCS Fuse mount options for performance tuning
+- **Automatic Setup**: Scripts automatically configure GKE connections and clean up all resources
+- **Timestamped Results**: Results are saved with timestamps to prevent overwriting previous test data  
+- **Comprehensive Error Handling**: Built-in status monitoring and error recovery mechanisms
+- **Flexible Mount Options**: Support for various GCS Fuse mount options for performance tuning
+- **Resource Efficiency**: Monitoring adapts to actual job duration, avoiding unnecessary resource usage
+- **Container Isolation**: Resource metrics separated by container type for better analysis
