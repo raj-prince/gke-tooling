@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Simple FIO Benchmark Runner for GKE
-# Usage: ./simple-fio.sh [num_files] [file_size] [iterations]
+# Usage: ./simple-fio.sh [num_files] [file_size] [iterations] [mode] [block_size] [mount_options]
 
 set -e
 
@@ -11,6 +11,7 @@ FILE_SIZE=${2:-256K}
 ITERATIONS=${3:-3}
 MODE=${4:-read}
 BLOCK_SIZE=${5:-1M}
+MOUNT_OPTIONS=${6:-"implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=trace"}
 
 # GKE Configuration
 PROJECT_ID="gcs-tess"
@@ -225,7 +226,7 @@ spec:
           readOnly: false
           volumeAttributes:
             bucketName: "${BUCKET_NAME}"
-            mountOptions: "implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=trace"
+            mountOptions: "${MOUNT_OPTIONS}"
       - name: script-volume
         configMap:
           name: fio-script-${job_name}
@@ -239,19 +240,29 @@ YAML_EOF
 # Show usage
 show_usage() {
     cat << EOF
-Usage: $0 [num_files] [file_size] [iterations] [mode] [block_size]
+Usage: $0 [num_files] [file_size] [iterations] [mode] [block_size] [mount_options]
 
 Parameters:
-  num_files    Number of files (default: 100)
-  file_size    Size per file (default: 256K)
-  iterations   Number of test runs within single job (default: 3)
-  mode         I/O mode (default: read) - read, write, randread, randwrite
-  block_size   Block size (default: 1M)
+  num_files     Number of files (default: 100)
+  file_size     Size per file (default: 256K)
+  iterations    Number of test runs within single job (default: 3)
+  mode          I/O mode (default: read) - read, write, randread, randwrite
+  block_size    Block size (default: 1M)
+  mount_options GCS FUSE mount options (default: "implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=trace")
 
 Examples:
-  $0                           # 100 files x 256K, 3 iterations
+  $0                           # Default: 100 files x 256K, 3 iterations
   $0 50 1M 5                   # 50 files x 1M, 5 iterations  
   $0 100 256K 3 randwrite 4K   # 100 files x 256K, 3 iterations, random write, 4K blocks
+  $0 10 512K 2 read 64K "implicit-dirs,metadata-cache:ttl-secs:60" # Custom mount options
+
+Common Mount Options:
+  - implicit-dirs                    # Enable implicit directories
+  - metadata-cache:ttl-secs:60       # Set metadata cache TTL to 60 seconds
+  - metadata-cache:ttl-secs:-1       # Disable metadata cache TTL
+  - log-severity=trace               # Enable trace logging
+  - log-severity=info                # Set log level to info
+  - max-conns-per-host:100           # Maximum connections per host
 
 EOF
 }
@@ -265,6 +276,7 @@ fi
 echo "[INFO] Starting FIO Benchmark"
 echo "[INFO] Configuration: $NUM_FILES files x $FILE_SIZE, $ITERATIONS iterations"
 echo "[INFO] Mode: $MODE, Block Size: $BLOCK_SIZE"
+echo "[INFO] Mount Options: $MOUNT_OPTIONS"
 echo ""
 
 # Check dependencies
