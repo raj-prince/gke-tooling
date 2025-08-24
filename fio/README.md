@@ -55,28 +55,32 @@ Both scripts are pre-configured with the following GKE setup:
 ### Multi File Size Job
 
 ```bash
-./run-multi-fio-job.sh [num_files] [iterations] [mode] [block_size] [mount_options] [parallel_mode] [max_parallel_jobs]
+./run-multi-fio-job.sh [iterations] [mode] [block_size] [parallel_mode] [max_parallel_jobs] [mount_options]
 ```
 
 **Parameters:**
-- `num_files`: Base number of files (automatically adjusted per file size, default: 10)
 - `iterations`: Number of iterations per file size (default: 2)
 - `mode`: Test mode - read/write/randrw (default: read)
 - `block_size`: FIO block size (default: 1M)
-- `mount_options`: GCS Fuse mount options (default includes buffered read and metadata caching)
 - `parallel_mode`: Enable parallel execution (default: false)
 - `max_parallel_jobs`: Maximum parallel jobs when parallel mode is enabled (default: 3)
+- `mount_options`: GCS Fuse mount options (default includes buffered read and metadata caching)
+
+**Note:** Number of files is automatically determined based on file size (no manual specification needed)
 
 **Examples:**
 ```bash
 # Run with defaults (sequential execution)
 ./run-multi-fio-job.sh
 
-# Run with parallel execution
-./run-multi-fio-job.sh 10 2 read 1M "implicit-dirs,metadata-cache:ttl-secs:60" true 3
+# Run with parallel execution (3 iterations, read mode, 1M blocks, parallel mode, 3 max jobs)
+./run-multi-fio-job.sh 3 read 1M true 3
 
-# Run write tests with more iterations
-./run-multi-fio-job.sh 15 5 write 4M
+# Run write tests with more iterations and custom mount options
+./run-multi-fio-job.sh 5 write 4M false 1 "implicit-dirs,metadata-cache:ttl-secs:60"
+
+# Run parallel read tests with custom settings
+./run-multi-fio-job.sh 2 read 1M true 3 "implicit-dirs,metadata-cache:ttl-secs:60,log-severity=info"
 ```
 
 ## File Size Configuration

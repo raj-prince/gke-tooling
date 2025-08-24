@@ -2,7 +2,7 @@
 
 # Multi File Size FIO Benchmark Runner for GKE
 # This script runs FIO tests across different file sizes
-# Usage: ./run-multi-fio-job.sh [num_files] [iterations] [mode] [block_size] [mount_options] [parallel_mode] [max_parallel_jobs]
+# Usage: ./run-multi-fio-job.sh [iterations] [mode] [block_size] [parallel_mode] [max_parallel_jobs] [mount_options]
 
 set -e
 
