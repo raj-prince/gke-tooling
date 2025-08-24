@@ -35,7 +35,7 @@ monitor_resources() {
     local max_memory="0"
     local monitoring_count=0
     
-    echo "[INFO] Starting resource monitoring for pod: $pod_name"
+    echo "[INFO] Starting resource monitoring for Job ID: ${job_name}, Pod: ${pod_name}"
     
     # Start monitoring immediately but wait for pod to be ready first
     local attempts=0
@@ -152,7 +152,10 @@ monitor_resources() {
 run_fio_job() {
     local job_name="fio-test-$(date +%s)"
     
-    echo "[INFO] Running FIO test with $ITERATIONS iterations (Job: $job_name)"
+    echo "[INFO] =============================================="
+    echo "[INFO] Starting FIO test with $ITERATIONS iterations"
+    echo "[INFO] GKE Job ID: ${job_name}"
+    echo "[INFO] =============================================="
     
     # Create the FIO test script
     create_fio_script
@@ -164,7 +167,7 @@ run_fio_job() {
     kubectl apply -f /tmp/fio-job.yaml
     
     # Wait for job to complete and monitor resources
-    echo "[INFO] Waiting for job to complete..."
+    echo "[INFO] Waiting for job to complete (Job ID: ${job_name})..."
     
     # Wait for pod to be created and get its name
     local pod_name=""
@@ -172,6 +175,8 @@ run_fio_job() {
         pod_name=$(kubectl get pods -l job-name=${job_name} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
         sleep 1
     done
+    
+    echo "[INFO] Pod created: ${pod_name}"
     
     # Start resource monitoring in background
     monitor_resources "$pod_name" "$job_name" &
@@ -193,11 +198,11 @@ run_fio_job() {
     local max_gcsfuse_cpu=$(cat "/tmp/max_gcsfuse_cpu_${job_name}" 2>/dev/null || echo "0")
     local max_gcsfuse_memory=$(cat "/tmp/max_gcsfuse_memory_${job_name}" 2>/dev/null || echo "0")
     
-    echo "[INFO] Results:"
+    echo "[INFO] Results (Job ID: ${job_name}, Pod: ${pod_name}):"
     echo "=============================================="
     kubectl logs $pod_name
     echo "=============================================="
-    echo "[INFO] Resource Usage:"
+    echo "[INFO] Resource Usage (Job ID: ${job_name}):"
     echo "  Overall Pod:"
     echo "    Max CPU: ${max_cpu}m"
     echo "    Max Memory: ${max_memory}Mi"
@@ -210,6 +215,7 @@ run_fio_job() {
     echo "=============================================="
     
     # Cleanup
+    echo "[INFO] Cleaning up Job ID: ${job_name}"
     kubectl delete job ${job_name}
     kubectl delete configmap "fio-script-${job_name}"
     rm -f /tmp/fio-job.yaml /tmp/fio-test-script.sh

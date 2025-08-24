@@ -94,30 +94,46 @@ The multi-job script tests various file sizes with automatically adjusted file c
 Both scripts provide:
 - **Performance Metrics**: IOPS and bandwidth measurements
 - **Resource Usage**: CPU and memory consumption for pods and containers
+- **Job ID Tracking**: Each test includes GKE job ID for debugging and correlation
 - **Detailed Logs**: Comprehensive logging of the benchmark process
-- **CSV Results**: Results are saved to timestamped CSV files
+- **CSV Results**: Results are saved to timestamped CSV files with job ID information
+
+### Multi-Job CSV Output Format
+The multi-job script generates CSV files with the following columns:
+```csv
+File_Size,Job_ID,IOPS,Bandwidth_MBps,Pod_Max_CPU_m,Pod_Max_Memory_Mi,FIO_CPU_m,FIO_Memory_Mi,GCS_FUSE_CPU_m,GCS_FUSE_Memory_Mi
+100M,fio-test-1756054084,629.85,660.44,4684,499,4563,130,1578,372
+1G,fio-test-1756054123,892.45,935.12,5120,645,4980,145,1890,480
+```
 
 ### Sample Output
 ```
-===============================================
-FIO Benchmark Results
-===============================================
+==============================================
+Starting FIO test with 2 iterations
+GKE Job ID: fio-test-1756054084
+==============================================
+Pod created: fio-test-1756054084-bnhvm
+[INFO] Pod status changed to: Succeeded, stopping resource monitoring
+
+Results (Job ID: fio-test-1756054084, Pod: fio-test-1756054084-bnhvm):
+==============================================
 Average IOPS: 629.85
 Average Bandwidth: 660.44 MB/s
 Successful iterations: 2 / 2
+Test completed!
+==============================================
 
-Pod Resource Usage:
-Max CPU Usage: 4684m
-Max Memory Usage: 499Mi
-
-Container Resource Breakdown:
-FIO Test Container:
-  Max CPU Usage: 4563m
-  Max Memory Usage: 130Mi
-GCS FUSE Sidecar Container:
-  Max CPU Usage: 1578m
-  Max Memory Usage: 372Mi
-===============================================
+Resource Usage (Job ID: fio-test-1756054084):
+  Overall Pod:
+    Max CPU: 4684m
+    Max Memory: 499Mi
+  FIO Container:
+    Max CPU: 4563m
+    Max Memory: 130Mi
+  GCS FUSE Sidecar Container:
+    Max CPU: 1578m
+    Max Memory: 372Mi
+==============================================
 ```
 
 ## Monitoring and Debugging
@@ -136,6 +152,23 @@ Both scripts include advanced monitoring capabilities:
 - **Real-time Metrics**: CPU and memory usage captured every 2 seconds
 - **Maximum Value Tracking**: Records peak resource usage during test execution
 - **Multi-Container Support**: Tracks both test workload and GCS FUSE sidecar separately
+- **Job ID Integration**: All tests include GKE job IDs for easy debugging and log correlation
+
+### Job ID Benefits for Debugging:
+With job IDs, you can easily:
+```bash
+# View job details
+kubectl describe job <job-id>
+
+# Check pod logs  
+kubectl logs <job-id>-<random-suffix>
+
+# Get pod details
+kubectl describe pod <job-id>-<random-suffix>
+
+# View events related to the job
+kubectl get events --field-selector involvedObject.name=<job-id>
+```
 
 ## Troubleshooting
 

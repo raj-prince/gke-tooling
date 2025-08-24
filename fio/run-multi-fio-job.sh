@@ -26,7 +26,7 @@ FILE_SIZES=(
     # "256M"
     "1G"
     # "4G"
-    "10G"
+    # "10G"
 )
 
 # Results storage
@@ -38,6 +38,7 @@ declare -A results_fio_cpu
 declare -A results_fio_memory
 declare -A results_gcsfuse_cpu
 declare -A results_gcsfuse_memory
+declare -A results_job_id
 
 # Function to determine number of files based on file size
 get_num_files_for_size() {
@@ -96,6 +97,25 @@ extract_results() {
     local iops=$(echo "$output" | grep "Average IOPS:" | tail -1 | awk '{print $3}')
     local bandwidth=$(echo "$output" | grep "Average Bandwidth:" | tail -1 | awk '{print $3}')
     
+    # Extract job ID from the output - fixed version
+    local job_id=$(echo "$output" | grep "GKE Job ID:" | awk '{print $5}' | head -1)
+    
+    # Debug: if job_id is empty, try alternative extraction methods
+    if [ -z "$job_id" ]; then
+        # Try to extract from "Job ID:" pattern (without [INFO])
+        job_id=$(echo "$output" | grep -E "Job ID:" | awk '{print $4}' | head -1)
+        
+        # If still empty, try extracting from results line
+        if [ -z "$job_id" ]; then
+            job_id=$(echo "$output" | grep "Results (Job ID:" | sed -n 's/.*Job ID: \([^,]*\).*/\1/p' | head -1)
+        fi
+        
+        # If still empty, set as unknown
+        if [ -z "$job_id" ]; then
+            job_id="UNKNOWN"
+        fi
+    fi
+    
     # Extract overall pod resource usage
     local max_cpu=$(echo "$output" | grep "Overall Pod:" -A 2 | grep "Max CPU:" | awk '{print $3}' | sed 's/m$//')
     local max_memory=$(echo "$output" | grep "Overall Pod:" -A 2 | grep "Max Memory:" | awk '{print $3}' | sed 's/Mi$//')
@@ -108,7 +128,7 @@ extract_results() {
     local gcsfuse_cpu=$(echo "$output" | grep "GCS FUSE Sidecar Container:" -A 2 | grep "Max CPU:" | awk '{print $3}' | sed 's/m$//')
     local gcsfuse_memory=$(echo "$output" | grep "GCS FUSE Sidecar Container:" -A 2 | grep "Max Memory:" | awk '{print $3}' | sed 's/Mi$//')
     
-    echo "$iops|$bandwidth|$max_cpu|$max_memory|$fio_cpu|$fio_memory|$gcsfuse_cpu|$gcsfuse_memory"
+    echo "$iops|$bandwidth|$max_cpu|$max_memory|$fio_cpu|$fio_memory|$gcsfuse_cpu|$gcsfuse_memory|$job_id"
 }
 
 # Function to run a single test and save results to file (for parallel mode)
@@ -131,6 +151,10 @@ run_single_test() {
         # Extract results
         result=$(extract_results "$output")
         
+        # Debug: Show extracted job ID
+        extracted_job_id=$(echo "$result" | cut -d'|' -f9)
+        echo "[DEBUG] Extracted Job ID: '$extracted_job_id'"
+        
         # Save results to temporary file
         echo "SUCCESS|$file_size|$dynamic_num_files|$result" > "$output_file"
         
@@ -143,7 +167,9 @@ run_single_test() {
         fio_memory=$(echo "$result" | cut -d'|' -f6)
         gcsfuse_cpu=$(echo "$result" | cut -d'|' -f7)
         gcsfuse_memory=$(echo "$result" | cut -d'|' -f8)
+        job_id=$(echo "$result" | cut -d'|' -f9)
         
+        echo "  Job ID: $job_id"
         echo "  Files: $dynamic_num_files"
         echo "  IOPS: $iops"
         echo "  Bandwidth: $bandwidth MB/s"
@@ -157,7 +183,7 @@ run_single_test() {
         echo ""
         
         # Save failure marker
-        echo "FAILED|$file_size|$dynamic_num_files|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED" > "$output_file"
+        echo "FAILED|$file_size|$dynamic_num_files|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED" > "$output_file"
     fi
 }
 
@@ -217,7 +243,7 @@ if [ "$PARALLEL_MODE" = "true" ]; then
     for output_file in "${output_files[@]}"; do
         if [ -f "$output_file" ]; then
             line=$(cat "$output_file")
-            IFS='|' read -r status file_size num_files iops bandwidth max_cpu max_memory fio_cpu fio_memory gcsfuse_cpu gcsfuse_memory <<< "$line"
+            IFS='|' read -r status file_size num_files iops bandwidth max_cpu max_memory fio_cpu fio_memory gcsfuse_cpu gcsfuse_memory job_id <<< "$line"
             
             # Store results
             results_iops["$file_size"]="$iops"
@@ -228,6 +254,7 @@ if [ "$PARALLEL_MODE" = "true" ]; then
             results_fio_memory["$file_size"]="$fio_memory"
             results_gcsfuse_cpu["$file_size"]="$gcsfuse_cpu"
             results_gcsfuse_memory["$file_size"]="$gcsfuse_memory"
+            results_job_id["$file_size"]="$job_id"
         fi
     done
 
@@ -252,6 +279,11 @@ for file_size in "${FILE_SIZES[@]}"; do
         
         # Extract results
         result=$(extract_results "$output")
+        
+        # Debug: Show extracted job ID
+        extracted_job_id=$(echo "$result" | cut -d'|' -f9)
+        echo "[DEBUG] Extracted Job ID: '$extracted_job_id'"
+        
         iops=$(echo "$result" | cut -d'|' -f1)
         bandwidth=$(echo "$result" | cut -d'|' -f2)
         max_cpu=$(echo "$result" | cut -d'|' -f3)
@@ -260,6 +292,7 @@ for file_size in "${FILE_SIZES[@]}"; do
         fio_memory=$(echo "$result" | cut -d'|' -f6)
         gcsfuse_cpu=$(echo "$result" | cut -d'|' -f7)
         gcsfuse_memory=$(echo "$result" | cut -d'|' -f8)
+        job_id=$(echo "$result" | cut -d'|' -f9)
         
         # Store results
         results_iops["$file_size"]="$iops"
@@ -270,6 +303,9 @@ for file_size in "${FILE_SIZES[@]}"; do
         results_fio_memory["$file_size"]="$fio_memory"
         results_gcsfuse_cpu["$file_size"]="$gcsfuse_cpu"
         results_gcsfuse_memory["$file_size"]="$gcsfuse_memory"
+        results_job_id["$file_size"]="$job_id"
+        
+        echo "  Job ID: $job_id"
         
         echo "  Files: $dynamic_num_files"
         echo "  IOPS: $iops"
@@ -292,6 +328,7 @@ for file_size in "${FILE_SIZES[@]}"; do
         results_fio_memory["$file_size"]="FAILED"
         results_gcsfuse_cpu["$file_size"]="FAILED"
         results_gcsfuse_memory["$file_size"]="FAILED"
+        results_job_id["$file_size"]="FAILED"
     fi
     
     # Brief pause between tests
@@ -305,8 +342,8 @@ echo ""
 echo "==============================================="
 echo "FINAL RESULTS SUMMARY"
 echo "==============================================="
-printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s\n" "File Size" "IOPS" "BW (MB/s)" "Pod CPU" "Pod Mem" "FIO CPU" "FIO Mem" "gcsfuse CPU" "gcsfuse mem"
-echo "------------------------------------------------------------------------------------------------------------------------------"
+printf "%-10s %-20s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s\n" "File Size" "Job ID" "IOPS" "BW (MB/s)" "Pod CPU" "Pod Mem" "FIO CPU" "FIO Mem" "gcsfuse CPU" "gcsfuse mem"
+echo "------------------------------------------------------------------------------------------------------------------------------------------------"
 
 for file_size in "${FILE_SIZES[@]}"; do
     iops="${results_iops[$file_size]}"
@@ -317,15 +354,19 @@ for file_size in "${FILE_SIZES[@]}"; do
     fio_memory="${results_fio_memory[$file_size]}"
     gcsfuse_cpu="${results_gcsfuse_cpu[$file_size]}"
     gcsfuse_memory="${results_gcsfuse_memory[$file_size]}"
+    job_id="${results_job_id[$file_size]}"
     
-    printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s\n" "$file_size" "$iops" "$bandwidth" "${max_cpu}m" "${max_memory}Mi" "${fio_cpu}m" "${fio_memory}Mi" "${gcsfuse_cpu}m" "${gcsfuse_memory}Mi"
+    # Debug: Show what job ID is being used
+    echo "[DEBUG] File Size: $file_size, Job ID: '$job_id'"
+    
+    printf "%-10s %-20s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s\n" "$file_size" "$job_id" "$iops" "$bandwidth" "${max_cpu}m" "${max_memory}Mi" "${fio_cpu}m" "${fio_memory}Mi" "${gcsfuse_cpu}m" "${gcsfuse_memory}Mi"
 done
 
 echo "========================================================================"
 
 # Generate CSV output for analysis
 csv_file="fio_results_$(date +%Y%m%d_%H%M%S).csv"
-echo "File_Size,IOPS,Bandwidth_MBps,Pod_Max_CPU_m,Pod_Max_Memory_Mi,FIO_CPU_m,FIO_Memory_Mi,GCS_FUSE_CPU_m,GCS_FUSE_Memory_Mi" > "$csv_file"
+echo "File_Size,Job_ID,IOPS,Bandwidth_MBps,Pod_Max_CPU_m,Pod_Max_Memory_Mi,FIO_CPU_m,FIO_Memory_Mi,GCS_FUSE_CPU_m,GCS_FUSE_Memory_Mi" > "$csv_file"
 
 for file_size in "${FILE_SIZES[@]}"; do
     iops="${results_iops[$file_size]}"
@@ -336,7 +377,8 @@ for file_size in "${FILE_SIZES[@]}"; do
     fio_memory="${results_fio_memory[$file_size]}"
     gcsfuse_cpu="${results_gcsfuse_cpu[$file_size]}"
     gcsfuse_memory="${results_gcsfuse_memory[$file_size]}"
-    echo "$file_size,$iops,$bandwidth,$max_cpu,$max_memory,$fio_cpu,$fio_memory,$gcsfuse_cpu,$gcsfuse_memory" >> "$csv_file"
+    job_id="${results_job_id[$file_size]}"
+    echo "$file_size,$job_id,$iops,$bandwidth,$max_cpu,$max_memory,$fio_cpu,$fio_memory,$gcsfuse_cpu,$gcsfuse_memory" >> "$csv_file"
 done
 
 echo "Results saved to: $csv_file"
