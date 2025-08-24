@@ -421,7 +421,7 @@ echo "========================================================================"
 
 # Generate CSV output for analysis
 csv_file="fio_results_$(date +%Y%m%d_%H%M%S).csv"
-echo "File_Size,Job_ID,IOPS,Bandwidth_MBps,Pod_Max_CPU_m,Pod_Max_Memory_Mi,FIO_CPU_m,FIO_Memory_Mi,GCS_FUSE_CPU_m,GCS_FUSE_Memory_Mi" > "$csv_file"
+echo "File_Size,Job_ID,IOPS,Bandwidth_MBps,Pod_Max_CPU_m,Pod_Max_Memory_MiB,FIO_CPU_m,FIO_Memory_MiB,GCS_FUSE_CPU_m,GCS_FUSE_Memory_MiB" > "$csv_file"
 
 for file_size in "${FILE_SIZES[@]}"; do
     iops="${results_iops[$file_size]}"
