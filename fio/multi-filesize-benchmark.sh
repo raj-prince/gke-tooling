@@ -175,8 +175,9 @@ echo ""
 echo "==============================================="
 echo "FINAL RESULTS SUMMARY"
 echo "==============================================="
-printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-10s %-10s\n" "File Size" "IOPS" "BW (MB/s)" "Pod CPU" "Pod Mem" "FIO CPU" "FIO Mem" "GCS CPU" "GCS Mem"
-echo "----------------------------------------------------------------------------------------------------------------------------"
+printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s
+" "File Size" "IOPS" "BW (MB/s)" "Pod CPU" "Pod Mem" "FIO CPU" "FIO Mem" "gcsfuse CPU" "gcsfuse mem"
+echo "------------------------------------------------------------------------------------------------------------------------------"
 
 for file_size in "${FILE_SIZES[@]}"; do
     iops="${results_iops[$file_size]}"
@@ -188,10 +189,10 @@ for file_size in "${FILE_SIZES[@]}"; do
     gcsfuse_cpu="${results_gcsfuse_cpu[$file_size]}"
     gcsfuse_memory="${results_gcsfuse_memory[$file_size]}"
     
-    printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-10s %-10s\n" "$file_size" "$iops" "$bandwidth" "${max_cpu}m" "${max_memory}Mi" "${fio_cpu}m" "${fio_memory}Mi" "${gcsfuse_cpu}m" "${gcsfuse_memory}Mi"
+    printf "%-8s %-8s %-10s %-8s %-8s %-8s %-8s %-8s %-8s\n" "$file_size" "$iops" "$bandwidth" "${max_cpu}m" "${max_memory}Mi" "${fio_cpu}m" "${fio_memory}Mi" "${gcsfuse_cpu}m" "${gcsfuse_memory}Mi"
 done
 
-echo "========================================================================="
+echo "========================================================================"
 
 # Generate CSV output for analysis
 csv_file="fio_results_$(date +%Y%m%d_%H%M%S).csv"
