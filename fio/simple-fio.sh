@@ -82,14 +82,16 @@ create_fio_config() {
     cat > /tmp/fio.conf << FIO_CONFIG_EOF
 [global]
 ioengine=libaio
-direct=1
+direct=0
 verify=0
 bs=$BLOCK_SIZE
-iodepth=64
-runtime=30s
-time_based=1
+iodepth=2
+runtime=120s
+time_based=0
+fadvise_hint=0
 nrfiles=$NUM_FILES
 thread=1
+openfiles=1
 group_reporting=1
 filename_format=test.\$jobnum.\$filenum
 
@@ -229,7 +231,7 @@ spec:
           readOnly: false
           volumeAttributes:
             bucketName: "${BUCKET_NAME}"
-            mountOptions: "${MOUNT_OPTIONS}"
+            mountOptions: "${MOUNT_OPTIONS},read_ahead_kb=1024"
       - name: script-volume
         configMap:
           name: fio-script-${job_name}
