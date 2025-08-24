@@ -2,7 +2,7 @@
 
 # Multi File Size FIO Benchmark Runner for GKE
 # This script runs FIO tests across different file sizes
-# Usage: ./multi-filesize-benchmark.sh [num_files] [iterations] [mode] [block_size] [mount_options]
+# Usage: ./multi-filesize-benchmark.sh [num_files] [iterations] [mode] [block_size] [mount_options] [parallel_mode] [max_parallel_jobs]
 
 set -e
 
@@ -12,6 +12,8 @@ ITERATIONS=${2:-2}
 MODE=${3:-read}
 BLOCK_SIZE=${4:-1M}
 MOUNT_OPTIONS=${5:-"implicit-dirs,metadata-cache:ttl-secs:60,log-severity=info,enable-buffered-read,log-severity=trace,read-block-size-mb=16"}
+PARALLEL_MODE=${6:-false}  # Set to true to enable parallel execution
+MAX_PARALLEL_JOBS=${7:-3}  # Maximum parallel jobs when parallel mode is enabled
 
 # Array of file sizes to test
 FILE_SIZES=(
@@ -76,6 +78,10 @@ echo "  Iterations per size: $ITERATIONS"
 echo "  Mode: $MODE"
 echo "  Block Size: $BLOCK_SIZE"
 echo "  Mount Options: $MOUNT_OPTIONS"
+echo "  Parallel Mode: $PARALLEL_MODE"
+if [ "$PARALLEL_MODE" = "true" ]; then
+    echo "  Max Parallel Jobs: $MAX_PARALLEL_JOBS"
+fi
 echo ""
 echo "File Size -> Number of Files mapping:"
 for file_size in "${FILE_SIZES[@]}"; do
@@ -106,7 +112,130 @@ extract_results() {
     echo "$iops|$bandwidth|$max_cpu|$max_memory|$fio_cpu|$fio_memory|$gcsfuse_cpu|$gcsfuse_memory"
 }
 
-# Run tests for each file size
+# Function to run a single test and save results to file (for parallel mode)
+run_single_test() {
+    local file_size="$1"
+    local dynamic_num_files="$2"
+    local output_file="$3"
+    
+    echo "=============================================="
+    echo "Starting Test: File Size $file_size ($dynamic_num_files files) [PID: $$]"
+    echo "=============================================="
+    
+    # Run the FIO test with dynamic file count
+    output=$(./simple-fio.sh "$dynamic_num_files" "$file_size" "$ITERATIONS" "$MODE" "$BLOCK_SIZE" "$MOUNT_OPTIONS" 2>&1)
+    
+    # Check if test was successful
+    if echo "$output" | grep -q "FIO Benchmark Complete"; then
+        echo "✓ Test completed successfully for $file_size"
+        
+        # Extract results
+        result=$(extract_results "$output")
+        
+        # Save results to temporary file
+        echo "SUCCESS|$file_size|$dynamic_num_files|$result" > "$output_file"
+        
+        # Display immediate results
+        iops=$(echo "$result" | cut -d'|' -f1)
+        bandwidth=$(echo "$result" | cut -d'|' -f2)
+        max_cpu=$(echo "$result" | cut -d'|' -f3)
+        max_memory=$(echo "$result" | cut -d'|' -f4)
+        fio_cpu=$(echo "$result" | cut -d'|' -f5)
+        fio_memory=$(echo "$result" | cut -d'|' -f6)
+        gcsfuse_cpu=$(echo "$result" | cut -d'|' -f7)
+        gcsfuse_memory=$(echo "$result" | cut -d'|' -f8)
+        
+        echo "  Files: $dynamic_num_files"
+        echo "  IOPS: $iops"
+        echo "  Bandwidth: $bandwidth MB/s"
+        echo "  Overall Pod - Max CPU: ${max_cpu}m, Max Memory: ${max_memory}Mi"
+        echo "  FIO Container - Max CPU: ${fio_cpu}m, Max Memory: ${fio_memory}Mi"
+        echo "  GCS FUSE Sidecar - Max CPU: ${gcsfuse_cpu}m, Max Memory: ${gcsfuse_memory}Mi"
+        echo ""
+    else
+        echo "✗ Test failed for file size $file_size"
+        echo "$output"
+        echo ""
+        
+        # Save failure marker
+        echo "FAILED|$file_size|$dynamic_num_files|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED|FAILED" > "$output_file"
+    fi
+}
+
+# Choose execution mode based on PARALLEL_MODE
+if [ "$PARALLEL_MODE" = "true" ]; then
+    echo "Running tests in PARALLEL mode..."
+    
+    # Create temporary directory for job outputs
+    TEMP_DIR=$(mktemp -d)
+    trap "rm -rf $TEMP_DIR" EXIT
+    
+    # Launch parallel tests
+    echo "Launching parallel tests..."
+    job_pids=()
+    output_files=()
+    
+    for file_size in "${FILE_SIZES[@]}"; do
+        # Get dynamic file count for this file size
+        dynamic_num_files=$(get_num_files_for_size "$file_size")
+        
+        # Create unique output file for this test
+        output_file="$TEMP_DIR/result_${file_size}.txt"
+        output_files+=("$output_file")
+        
+        # Launch test in background
+        run_single_test "$file_size" "$dynamic_num_files" "$output_file" &
+        job_pid=$!
+        job_pids+=($job_pid)
+        
+        echo "Started test for $file_size (PID: $job_pid)"
+        
+        # Limit concurrent jobs
+        if [ ${#job_pids[@]} -ge $MAX_PARALLEL_JOBS ]; then
+            echo "Waiting for some jobs to complete before starting more..."
+            # Wait for at least one job to complete
+            wait ${job_pids[0]}
+            # Remove completed job from array (simple approach - remove first)
+            job_pids=("${job_pids[@]:1}")
+        fi
+        
+        # Brief pause to avoid overwhelming the system
+        sleep 5
+    done
+    
+    # Wait for all remaining jobs to complete
+    echo ""
+    echo "Waiting for all tests to complete..."
+    for pid in "${job_pids[@]}"; do
+        wait $pid
+        echo "Test with PID $pid completed"
+    done
+    
+    echo ""
+    echo "All tests completed! Collecting results..."
+    
+    # Collect results from output files
+    for output_file in "${output_files[@]}"; do
+        if [ -f "$output_file" ]; then
+            line=$(cat "$output_file")
+            IFS='|' read -r status file_size num_files iops bandwidth max_cpu max_memory fio_cpu fio_memory gcsfuse_cpu gcsfuse_memory <<< "$line"
+            
+            # Store results
+            results_iops["$file_size"]="$iops"
+            results_bandwidth["$file_size"]="$bandwidth"
+            results_max_cpu["$file_size"]="$max_cpu"
+            results_max_memory["$file_size"]="$max_memory"
+            results_fio_cpu["$file_size"]="$fio_cpu"
+            results_fio_memory["$file_size"]="$fio_memory"
+            results_gcsfuse_cpu["$file_size"]="$gcsfuse_cpu"
+            results_gcsfuse_memory["$file_size"]="$gcsfuse_memory"
+        fi
+    done
+
+else
+    echo "Running tests in SEQUENTIAL mode..."
+
+# Run tests for each file size (sequential mode)
 for file_size in "${FILE_SIZES[@]}"; do
     # Get dynamic file count for this file size
     dynamic_num_files=$(get_num_files_for_size "$file_size")
@@ -170,13 +299,14 @@ for file_size in "${FILE_SIZES[@]}"; do
     sleep 10
 done
 
+fi  # End of parallel/sequential mode selection
+
 # Display final results summary
 echo ""
 echo "==============================================="
 echo "FINAL RESULTS SUMMARY"
 echo "==============================================="
-printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s
-" "File Size" "IOPS" "BW (MB/s)" "Pod CPU" "Pod Mem" "FIO CPU" "FIO Mem" "gcsfuse CPU" "gcsfuse mem"
+printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s\n" "File Size" "IOPS" "BW (MB/s)" "Pod CPU" "Pod Mem" "FIO CPU" "FIO Mem" "gcsfuse CPU" "gcsfuse mem"
 echo "------------------------------------------------------------------------------------------------------------------------------"
 
 for file_size in "${FILE_SIZES[@]}"; do
@@ -189,7 +319,7 @@ for file_size in "${FILE_SIZES[@]}"; do
     gcsfuse_cpu="${results_gcsfuse_cpu[$file_size]}"
     gcsfuse_memory="${results_gcsfuse_memory[$file_size]}"
     
-    printf "%-8s %-8s %-10s %-8s %-8s %-8s %-8s %-8s %-8s\n" "$file_size" "$iops" "$bandwidth" "${max_cpu}m" "${max_memory}Mi" "${fio_cpu}m" "${fio_memory}Mi" "${gcsfuse_cpu}m" "${gcsfuse_memory}Mi"
+    printf "%-10s %-8s %-12s %-10s %-10s %-10s %-10s %-12s %-12s\n" "$file_size" "$iops" "$bandwidth" "${max_cpu}m" "${max_memory}Mi" "${fio_cpu}m" "${fio_memory}Mi" "${gcsfuse_cpu}m" "${gcsfuse_memory}Mi"
 done
 
 echo "========================================================================"
