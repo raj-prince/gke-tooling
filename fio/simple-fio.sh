@@ -26,6 +26,119 @@ setup_cluster() {
     gcloud container clusters get-credentials $CLUSTER_NAME --region $CLUSTER_REGION
 }
 
+# Monitor CPU and memory usage of a pod
+monitor_resources() {
+    local pod_name="$1"
+    local job_name="$2"
+    
+    local max_cpu="0"
+    local max_memory="0"
+    local monitoring_count=0
+    
+    echo "[INFO] Starting resource monitoring for pod: $pod_name"
+    
+    # Start monitoring immediately but wait for pod to be ready first
+    local attempts=0
+    while [ $attempts -lt 30 ]; do
+        pod_status=$(kubectl get pod "$pod_name" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [ "$pod_status" = "Running" ]; then
+            echo "[INFO] Pod is running, starting resource monitoring"
+            break
+        fi
+        sleep 1
+        attempts=$((attempts + 1))
+    done
+    
+    if [ $attempts -eq 30 ]; then
+        echo "[WARNING] Pod never reached Running state within timeout"
+        echo "0" > "/tmp/max_cpu_${job_name}"
+        echo "0" > "/tmp/max_memory_${job_name}"
+        return
+    fi
+    
+    # Remove debug output and make it simpler - just capture any metrics we can
+    local max_cpu=0
+    local max_memory=0
+    local max_fio_cpu=0
+    local max_fio_memory=0
+    local max_gcsfuse_cpu=0
+    local max_gcsfuse_memory=0
+    
+    # Try to get metrics multiple times during and after the job
+    for i in {1..30}; do  # Try for 30 seconds
+        # Get overall pod metrics
+        resource_output=$(kubectl top pod "$pod_name" --no-headers 2>/dev/null || echo "")
+        
+        if [[ -n "$resource_output" ]]; then
+            cpu_val=$(echo "$resource_output" | awk '{print $2}' | sed 's/m$//')
+            mem_val=$(echo "$resource_output" | awk '{print $3}' | sed 's/Mi$//')
+            
+            # Check if values are numeric and update max
+            if [[ "$cpu_val" =~ ^[0-9]+$ ]] && (( cpu_val > max_cpu )); then
+                max_cpu=$cpu_val
+            fi
+            
+            if [[ "$mem_val" =~ ^[0-9]+$ ]] && (( mem_val > max_memory )); then
+                max_memory=$mem_val
+            fi
+        fi
+        
+        # Get per-container metrics
+        container_output=$(kubectl top pod "$pod_name" --containers --no-headers 2>/dev/null || echo "")
+        
+        if [[ -n "$container_output" ]]; then
+            # Debug: show what container output looks like
+            echo "[DEBUG] Container metrics output:"
+            echo "$container_output"
+            
+            # Parse individual container metrics
+            while IFS= read -r line; do
+                container_name=$(echo "$line" | awk '{print $2}')
+                
+                if [[ "$container_name" == "fio-test" ]]; then
+                    fio_cpu=$(echo "$line" | awk '{print $3}' | sed 's/m$//')
+                    fio_mem=$(echo "$line" | awk '{print $4}' | sed 's/Mi$//')
+                    
+                    if [[ "$fio_cpu" =~ ^[0-9]+$ ]] && (( fio_cpu > max_fio_cpu )); then
+                        max_fio_cpu=$fio_cpu
+                    fi
+                    
+                    if [[ "$fio_mem" =~ ^[0-9]+$ ]] && (( fio_mem > max_fio_memory )); then
+                        max_fio_memory=$fio_mem
+                    fi
+                elif [[ "$container_name" == "gke-gcsfuse-sidecar" ]]; then
+                    gcsfuse_cpu=$(echo "$line" | awk '{print $3}' | sed 's/m$//')
+                    gcsfuse_mem=$(echo "$line" | awk '{print $4}' | sed 's/Mi$//')
+                    
+                    if [[ "$gcsfuse_cpu" =~ ^[0-9]+$ ]] && (( gcsfuse_cpu > max_gcsfuse_cpu )); then
+                        max_gcsfuse_cpu=$gcsfuse_cpu
+                    fi
+                    
+                    if [[ "$gcsfuse_mem" =~ ^[0-9]+$ ]] && (( gcsfuse_mem > max_gcsfuse_memory )); then
+                        max_gcsfuse_memory=$gcsfuse_mem
+                    fi
+                fi
+            done <<< "$container_output"
+        fi
+        
+        sleep 1
+    done
+    
+    echo "[INFO] Resource monitoring completed."
+    echo "[INFO] Overall Pod - Max CPU: ${max_cpu}m, Max Memory: ${max_memory}Mi"
+    echo "[INFO] FIO Container - Max CPU: ${max_fio_cpu}m, Max Memory: ${max_fio_memory}Mi"  
+    echo "[INFO] GCS FUSE Container - Max CPU: ${max_gcsfuse_cpu}m, Max Memory: ${max_gcsfuse_memory}Mi"
+    
+    # Save max values to temp files
+    echo "$max_cpu" > "/tmp/max_cpu_${job_name}"
+    echo "$max_memory" > "/tmp/max_memory_${job_name}"
+    echo "$max_fio_cpu" > "/tmp/max_fio_cpu_${job_name}"
+    echo "$max_fio_memory" > "/tmp/max_fio_memory_${job_name}"
+    echo "$max_gcsfuse_cpu" > "/tmp/max_gcsfuse_cpu_${job_name}"
+    echo "$max_gcsfuse_memory" > "/tmp/max_gcsfuse_memory_${job_name}"
+    echo "$max_memory" > "/tmp/max_memory_${job_name}"
+}
+
 # Run single FIO job with multiple iterations inside
 run_fio_job() {
     local job_name="fio-test-$(date +%s)"
@@ -41,22 +154,59 @@ run_fio_job() {
     # Deploy job
     kubectl apply -f /tmp/fio-job.yaml
     
-    # Wait for completion and show results
+    # Wait for job to complete and monitor resources
     echo "[INFO] Waiting for job to complete..."
+    
+    # Wait for pod to be created and get its name
+    local pod_name=""
+    while [ -z "$pod_name" ]; do
+        pod_name=$(kubectl get pods -l job-name=${job_name} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        sleep 1
+    done
+    
+    # Start resource monitoring in background
+    monitor_resources "$pod_name" "$job_name" &
+    local monitor_pid=$!
+    
+    # Wait for job completion
     kubectl wait --for=condition=complete job/${job_name} --timeout=600s
     
-    # Get and show results
-    local pod_name=$(kubectl get pods -l job-name=${job_name} -o jsonpath='{.items[0].metadata.name}')
+    # Let monitoring run for a bit longer to capture any remaining metrics
+    sleep 10
+    kill $monitor_pid 2>/dev/null || true
+    wait $monitor_pid 2>/dev/null || true
+    
+    # Get final resource usage
+    local max_cpu=$(cat "/tmp/max_cpu_${job_name}" 2>/dev/null || echo "0")
+    local max_memory=$(cat "/tmp/max_memory_${job_name}" 2>/dev/null || echo "0")
+    local max_fio_cpu=$(cat "/tmp/max_fio_cpu_${job_name}" 2>/dev/null || echo "0")
+    local max_fio_memory=$(cat "/tmp/max_fio_memory_${job_name}" 2>/dev/null || echo "0")
+    local max_gcsfuse_cpu=$(cat "/tmp/max_gcsfuse_cpu_${job_name}" 2>/dev/null || echo "0")
+    local max_gcsfuse_memory=$(cat "/tmp/max_gcsfuse_memory_${job_name}" 2>/dev/null || echo "0")
     
     echo "[INFO] Results:"
     echo "=============================================="
     kubectl logs $pod_name
+    echo "=============================================="
+    echo "[INFO] Resource Usage:"
+    echo "  Overall Pod:"
+    echo "    Max CPU: ${max_cpu}m"
+    echo "    Max Memory: ${max_memory}Mi"
+    echo "  FIO Container:"
+    echo "    Max CPU: ${max_fio_cpu}m"
+    echo "    Max Memory: ${max_fio_memory}Mi"
+    echo "  GCS FUSE Sidecar Container:"
+    echo "    Max CPU: ${max_gcsfuse_cpu}m"
+    echo "    Max Memory: ${max_gcsfuse_memory}Mi"
     echo "=============================================="
     
     # Cleanup
     kubectl delete job ${job_name}
     kubectl delete configmap "fio-script-${job_name}"
     rm -f /tmp/fio-job.yaml /tmp/fio-test-script.sh
+    rm -f "/tmp/max_cpu_${job_name}" "/tmp/max_memory_${job_name}"
+    rm -f "/tmp/max_fio_cpu_${job_name}" "/tmp/max_fio_memory_${job_name}"
+    rm -f "/tmp/max_gcsfuse_cpu_${job_name}" "/tmp/max_gcsfuse_memory_${job_name}"
 }
 
 # Create the FIO test script that will run inside the container
@@ -150,7 +300,6 @@ for i in $(seq 1 $ITERATIONS); do
     fi
     
     echo ""
-    sleep 5
 done
 
 # Calculate and display averages
@@ -272,28 +421,40 @@ Common Mount Options:
 EOF
 }
 
-# Main execution
-if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
-    show_usage
-    exit 0
-fi
+# Main execution function
+main() {
+    # Handle help requests
+    if [ "$1" == "--help" ] || [ "$1" == "-h" ]; then
+        show_usage
+        exit 0
+    fi
 
-echo "[INFO] Starting FIO Benchmark"
-echo "[INFO] Configuration: $NUM_FILES files x $FILE_SIZE, $ITERATIONS iterations"
-echo "[INFO] Mode: $MODE, Block Size: $BLOCK_SIZE"
-echo "[INFO] Mount Options: $MOUNT_OPTIONS"
-echo ""
+    echo "[INFO] Simple FIO Benchmark for GKE"
+    echo "[INFO] Files: $NUM_FILES x $FILE_SIZE"
+    echo "[INFO] Mode: $MODE, Block Size: $BLOCK_SIZE"
+    echo "[INFO] Iterations: $ITERATIONS"
+    echo "[INFO] Mount Options: $MOUNT_OPTIONS"
+    echo ""
+    
+    # Check dependencies
+    if ! command -v kubectl >/dev/null 2>&1; then
+        echo "[ERROR] kubectl not found"
+        exit 1
+    fi
+    
+    if ! command -v gcloud >/dev/null 2>&1; then
+        echo "[ERROR] gcloud not found"
+        exit 1
+    fi
+    
+    # Setup cluster connection
+    setup_cluster
+    
+    # Run the FIO job
+    run_fio_job
+    
+    echo "[INFO] FIO Benchmark Complete!"
+}
 
-# Check dependencies
-if ! command -v kubectl >/dev/null 2>&1; then
-    echo "[ERROR] kubectl not found"
-    exit 1
-fi
-
-# Setup cluster
-setup_cluster
-
-# Run single job with multiple FIO iterations inside
-run_fio_job
-
-echo "[INFO] FIO Benchmark Complete!"
+# Execute main function with all arguments
+main "$@"
