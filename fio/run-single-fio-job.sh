@@ -182,8 +182,8 @@ run_fio_job() {
     monitor_resources "$pod_name" "$job_name" &
     local monitor_pid=$!
     
-    # Wait for job completion
-    kubectl wait --for=condition=complete job/${job_name} --timeout=600s
+    # Wait for job completion, timeout 2 hrs
+    kubectl wait --for=condition=complete job/${job_name} --timeout=7200s
     
     # Let monitoring run for a bit longer to capture any remaining metrics
     sleep 10
@@ -264,7 +264,7 @@ filename_format=test.\$jobnum.\$filenum
 rw=$MODE
 filesize=$FILE_SIZE
 directory=/data/$FILE_SIZE
-numjobs=1
+numjobs=8
 FIO_CONFIG_EOF
 }
 
