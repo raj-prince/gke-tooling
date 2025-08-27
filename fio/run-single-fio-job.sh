@@ -11,7 +11,7 @@ FILE_SIZE=${2:-256K}
 ITERATIONS=${3:-3}
 MODE=${4:-read}
 BLOCK_SIZE=${5:-1M}
-MOUNT_OPTIONS=${6:-"implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=trace"}
+MOUNT_OPTIONS=${6:-"implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=info"}
 
 # GKE Configuration
 PROJECT_ID="gcs-tess"
