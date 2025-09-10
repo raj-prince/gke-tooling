@@ -264,7 +264,7 @@ filename_format=test.\$jobnum.\$filenum
 rw=$MODE
 filesize=$FILE_SIZE
 directory=/data/$FILE_SIZE
-numjobs=8
+numjobs=1
 FIO_CONFIG_EOF
 }
 
@@ -367,7 +367,7 @@ spec:
       serviceAccountName: warp-benchmark
       containers:
       - name: gke-gcsfuse-sidecar
-        image: gcr.io/gcs-tess/princer_google_com_20250824072506/gcs-fuse-csi-driver-sidecar-mounter:v1.17.0-75-g072dfe3f
+        image: gcr.io/gcs-tess/princer_google_com_20250903183340/gcs-fuse-csi-driver-sidecar-mounter:v1.17.0-86-g31041c94
       - name: fio-test
         image: ubuntu:22.04
         env:

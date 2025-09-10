@@ -21,7 +21,7 @@ spec:
       serviceAccountName: warp-benchmark
       containers:
         - name: gke-gcsfuse-sidecar
-          image: gcr.io/gcs-tess/princer/gcs-fuse-csi-driver-sidecar-mounter:v1.13.4-gcsfuse-2.12.1
+          image: gcr.io/gcs-tess/princer_google_com_20250903183340/gcs-fuse-csi-driver-sidecar-mounter:v1.17.0-86-g31041c94
         - name: gcs-fuse-warp-test
           image: ubuntu:latest
           command:
@@ -30,6 +30,8 @@ spec:
             - |
               set -e
               echo "Reading 5GiB using dd command:"
+              time dd if=/mnt/disks/test-bucket/5G/experiment.0 of=/dev/null bs=1M count=5120 iflag=direct
+              time dd if=/mnt/disks/test-bucket/5G/experiment.0 of=/dev/null bs=1M count=5120 iflag=direct
               time dd if=/mnt/disks/test-bucket/5G/experiment.0 of=/dev/null bs=1M count=5120 iflag=direct
 
           volumeMounts:
@@ -42,4 +44,4 @@ spec:
             readOnly: false
             volumeAttributes:
               bucketName: "gcs-fuse-warp-test-bucket"
-              mountOptions: "enable-buffered-read,read:block-size-mb:16,read:global-max-blocks:60,read:max-blocks-per-handle:30,read:start-blocks-per-handle:2,implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=trace"
+              mountOptions: "enable-buffered-read,read:block-size-mb:16,read:global-max-blocks:60,read:max-blocks-per-handle:30,read:start-blocks-per-handle:2,implicit-dirs,metadata-cache:ttl-secs:-1,metadata-cache:stat-cache-max-size-mb:-1,metadata-cache:type-cache-max-size-mb:-1,log-severity=info"
