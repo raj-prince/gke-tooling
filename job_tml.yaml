@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gcs-fuse-warp-test-with-fix
+spec:
+  parallelism: 64
+  completions: 64
+  completionMode: Indexed
+  template:
+    metadata:
+      labels:
+        app: gcs-fuse-warp-test
+    spec:
+      restartPolicy: Never
+      serviceAccountName: warp-benchmark
+      hostNetwork: true
+      containers:
+        - name: gcs-fuse-warp-test
+          image: ubuntu:latest
+          securityContext:
+            privileged: true
+          command:
+            - "/bin/bash"
+            - "-c"
+            - |
+              set -e
+
+              apt-get update
+              apt-get install -y golang curl lsb-release sudo gnupg git
+              GCSFUSE_REPO=gcsfuse-`lsb_release -c -s`
+              echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt $GCSFUSE_REPO main" | tee /etc/apt/sources.list.d/gcsfuse.list
+              curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | tee /usr/share/keyrings/cloud.google.asc
+              apt-get update && apt-get install -y gcsfuse
+              mkdir /gcs
+              gcsfuse --client-protocol grpc gcs-fuse-warp-test-bucket /gc
+              ls -la /gcs
+          volumeMounts:
+            - name: fuse-device
+              mountPath: /dev/fuse
+              readOnly: false
+      volumes:
+        - name: fuse-device
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
